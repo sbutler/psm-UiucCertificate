@@ -22,8 +22,26 @@ Install-Package chilkat-x64 -Scope CurrentUser
 To get the cmdlets you need to import the module:
 
 ```powershell
-ImportModule c:\path\to\UIUCCertificate.psd1
+ImportModule c:\path\to\UiucCertificate.psd1
 ```
 
-This will add the `New-UIUCCertificate` cmdlet. You can use `Get-Help` for more
-information on the parameters.
+This will add these cmdlets: `Request-UiucCertificate`, `Install-UiucCertificate`,
+and `Export-UiucCertificate`. You can use `Get-Help` to learn more about these
+commands.
+
+```powershell
+# Creates an example.illinois.edu-csr.pem file in the current directory.
+Request-UiucCertificate example.illinois.edu -Path .\
+
+# Submit to https://go.illinois.edu/sslrequest and wait for the returned
+# certificate. Store it in cert.pem. then run:
+Install-UiucCertificate .\cert.pem | Export-UiucCertificate -Path .\
+
+# You should now have these files in the current directory:
+# example.illinois.edu.pfx: Full private key, certificate, and chain in PKCS12
+#   format encrypted with the password.
+# example.illinois.edu-key.pem: RSA private key, unencrypted.
+# example.illinois.edu-key.der: RSA private key, unencrypted.
+# example.illinois.edu-crt.pem: x509 issued certificate.
+# example.illinois.edu-crt.der: x509 issued certificate.
+```
