@@ -121,10 +121,10 @@ SMIME = false
         Throw "CertReq -New failed: $LastExitCode"
       }
 
-      Write-Output [ordered]@{
+      Write-Output ([ordered]@{
         Domain = $Domain
         CertificateSigningRequest = ((Get-Content -LiteralPath $tmpCSR.FullName) -join "`n")
-      }
+      })
 
       If ($Path) {
         Copy-Item -LiteralPath $tmpCSR.FullName (Join-Path $Path "$Domain-csr.pem")
@@ -358,7 +358,7 @@ function Export-UiucCertificate {
         }
 
         Write-Output @{
-          Thumbprint = $_
+          Thumbprint = $cert.Sha1Thumbprint
           Domain = $cert.SubjectCN
           PrivateKey = $privKey.GetRsaPem()
           Certificate = $cert.ExportCertPem()
