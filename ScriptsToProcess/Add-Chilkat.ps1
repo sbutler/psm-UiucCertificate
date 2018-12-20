@@ -38,7 +38,7 @@ $chilkatLibPath = Join-Path (Split-Path $chilkatPkg.Source -Parent) 'lib'
 $chilkatDllPath = Join-path $chilkatLibPath 'net46\ChilkatDotNet46.dll'
 
 Try {
-  New-Object Chilkat.Cert
+  New-Object Chilkat.Cert | Out-Null
 } Catch {
   Add-Type -Path $chilkatDllPath
 }
