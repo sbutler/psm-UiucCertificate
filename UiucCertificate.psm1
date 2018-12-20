@@ -367,7 +367,7 @@ function Export-UiucCertificate {
         If ($Path) {
           $prefix = $cert.SubjectCN
           If ($certs.Length -gt 1) {
-            $prefix += "-$_"
+            $prefix += "-$($cert.Sha1Thumbprint)"
           }
 
           Copy-Item -LiteralPath $tmpPFX.FullName (Join-Path $Path "$prefix.pfx")
