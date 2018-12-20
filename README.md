@@ -22,7 +22,7 @@ Install-Package chilkat-x64 -Scope CurrentUser
 To get the cmdlets you need to import the module:
 
 ```powershell
-ImportModule c:\path\to\UiucCertificate.psd1
+Import-Module c:\path\to\UiucCertificate.psd1
 ```
 
 This will add these cmdlets: `Request-UiucCertificate`, `Install-UiucCertificate`,
