@@ -357,12 +357,12 @@ function Export-UiucCertificate {
           return
         }
 
-        Write-Output @{
+        Write-Output ([ordered]@{
           Thumbprint = $cert.Sha1Thumbprint
           Domain = $cert.SubjectCN
           PrivateKey = $privKey.GetRsaPem()
           Certificate = $cert.ExportCertPem()
-        }
+        })
 
         If ($Path) {
           $prefix = $cert.SubjectCN
