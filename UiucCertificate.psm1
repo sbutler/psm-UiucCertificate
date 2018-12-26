@@ -31,27 +31,145 @@
 # CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE SOFTWARE.
 
+Enum UiucCertificateScope {
+  CurrentUser
+  LocalMachine
+  WebHosting
+}
+
+Set-Variable CertificateSubjectFormat -Option Constant -Value 'CN={0}, OU=Urbana-Champaign Campus, O=University of Illinois, L=Urbana, S=Illinois, C=US'
+Set-Variable CertificateSubjectCNPattern -Option Constant -Value '(?:^|[\s,])CN=(?<cn>[^,]*)(?:,|$)'
+Set-Variable ThumbprintPattern -Option Constant -Value '^[a-f0-9]{40}$'
+
+
 <#
 .SYNOPSIS
-Request a new private key and certificate signing request (CSR) formatted for
-UIUC signing.
-
-.DESCRIPTION
-
+Finds a certificate in the Windows certificate store, returning a new
+X509Certificate2 object.
 
 .INPUTS
 
-System.String. Domain name to use as the common name in the CSR.
+object. This can be either an X509Certificate object, a string
+thumbprint, or a DNS domain.
 
-.PARAMETER Domain
+.PARAMETER Certificate
 
-Primary domain name for the certificate, included in the CSR as the Common
-Name (CN).
+X509Certificate object which will be copied as a new X509Certificate2.
+
+.PARAMETER Thumbprint
+
+SHA1 hash of the certificate to find.
+
+.PARAMETER DnsName
+
+Primary DNS domain name for the certificate to find. Using this parameter
+might match multiple certificates.
+
+.PARAMETER Scope
+
+Where the certificate is stored: CurrentUser, LocalMachine, or
+WebHosting. If LocalMachine or WebHosting then the user must be the
+Adminsitrator.
+
+.OUTPUTS
+
+System.Security.Cryptography.X509Certificates.X509Certificate2.
+Any found certificates that match the input criteria. The return value
+should be disposed when you are finished using it.
+#>
+Function Find-UiucCertificate {
+  Param(
+    [parameter(ValueFromPipeline=$true, Position=0, Mandatory=$true, ParameterSetName="InputObject")]
+    [ValidateNotNullOrEmpty()]
+    [object]$InputObject,
+
+    [parameter(Mandatory=$true, ParameterSetName="Certificate")]
+    [ValidateNotNullOrEmpty()]
+    [System.Security.Cryptography.X509Certificates.X509Certificate]$Certificate,
+
+    [parameter(Mandatory=$true, ParameterSetName="DnsName")]
+    [ValidateNotNullOrEmpty()]
+    [string]$DnsName,
+
+    [parameter(Mandatory=$true, ParameterSetName="Thumbprint")]
+    [ValidateNotNullOrEmpty()]
+    [string]$Thumbprint,
+
+    [parameter(ParameterSetName="InputObject")]
+    [parameter(ParameterSetName="DnsName")]
+    [parameter(ParameterSetName="Thumbprint")]
+    [UiucCertificateScope]$Scope = [UiucCertificateScope]::CurrentUser
+  )
+
+  Begin {
+    Switch ($Scope) {
+      CurrentUser     { $CertBase = 'Cert:\CurrentUser\My' }
+      LocalMachine    { $CertBase = 'Cert:\LocalMachine\My' }
+      WebHosting      { $CertBase = 'Cert:\LocalMachine\WebHosting' }
+    }
+  }
+
+  Process {
+    $setName = $PSCmdlet.ParameterSetName
+    If ($setName -eq "InputObject") {
+      # Do some detection of the data we were passed
+      If ($InputObject -is [string]) {
+        If ($InputObject -match $ThumbprintPattern) {
+          $setName = "Thumbprint"
+          $Thumbprint = $InputObject
+        } Else {
+          $setName = "DnsName"
+          $DnsName = $InputObject
+        }
+      } ElseIf ($InputObject -is [System.Security.Cryptography.X509Certificates.X509Certificate]) {
+        $setName = "Certificate"
+        $Certificate = $InputObject
+      }
+    }
+
+    Switch ($setName) {
+      Certificate { New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 $Certficate }
+      Thumbprint  { Get-Item (Join-Path $CertBase $Thumbprint) }
+      DnsName     { Get-ChildItem -LiteralPath $CertBase -DnsName $DnsName }
+    }
+  }
+}
+
+
+<#
+.SYNOPSIS
+Request certificate signing request (CSR) formatted for UIUC signing,
+either using a new private key or renewing an existing certificate.
+
+.INPUTS
+
+object. This can be either an X509Certificate object, a string
+thumbprint, or a DNS domain.
+
+.PARAMETER Certificate
+
+X509Certificate object of an existing certificate to generate the
+request for.
+
+.PARAMETER Thumbprint
+
+SHA1 hash of an existing certificate to generate the request for.
+
+.PARAMETER DnsName
+
+Primary DNS domain name for the certificate to generate the request for.
+Using this parameter might generate multiple requests when renewing.
+
+.PARAMETER Renew
+
+Renew an existing certificate instead of generating a new private key.
+If the certificate cannot be found in the local stores then nothing
+is done.
 
 .PARAMETER Path
 
-Path to save the CSR file as "$Domain-csr.pem".If this is not specified
-then the CSR is only available on the pipeline.
+Path to save the CSR file as "$domain-csr.pem".If this is not
+specified then the CSR is only available on the pipeline.
 
 .PARAMETER HashAlgorithm
 
@@ -59,25 +177,40 @@ Hashing algorithm used for the CSR.
 
 .PARAMETER KeyLength
 
-Length of the private key in bits. This must be 2048 if you will submit
-the CSR for signing.
+Length of the private key in bits if creating a new private key. This
+must be 2048 if you will submit the request for signing.
 
-.PARAMETER MachineKeySet
+.PARAMETER Scope
 
-Store the key in the LocalMachine store instead of CurrentUser. Saving to
-the MachineKeySet requires Administrator prileges.
+Where the certificate is stored: CurrentUser, LocalMachine, or
+WebHosting. If LocalMachine or WebHosting then the user must be the
+Adminsitrator.
 
 .OUTPUTS
 
-@{Domain; CertificateSigningRequest}.
-Information about each certificate created. The values are strings in PEM
-format.
+@{DnsName; Subject; CertificateSigningRequest}.
+Information about each certificate created. The values are strings in
+PEM format.
 #>
 Function Request-UiucCertificate {
   Param(
-    [parameter(ValueFromPipeline=$true, Position=0, Mandatory=$true)]
+    [parameter(ValueFromPipeline=$true, Position=0, Mandatory=$true, ParameterSetName="InputObject")]
     [ValidateNotNullOrEmpty()]
-    [string]$Domain,
+    [object]$InputObject,
+
+    [parameter(Mandatory=$true, ParameterSetName="Certificate")]
+    [ValidateNotNullOrEmpty()]
+    [System.Security.Cryptography.X509Certificates.X509Certificate]$Certificate,
+
+    [parameter(Mandatory=$true, ParameterSetName="DnsName")]
+    [ValidateNotNullOrEmpty()]
+    [string]$DnsName,
+
+    [parameter(Mandatory=$true, ParameterSetName="Thumbprint")]
+    [ValidateNotNullOrEmpty()]
+    [string]$Thumbprint,
+
+    [switch]$Renew = $false,
 
     [string]$Path = $null,
 
@@ -89,49 +222,114 @@ Function Request-UiucCertificate {
     [ValidateScript({ $_ -ge 2048 })]
     [int]$KeyLength = 2048,
 
-    [switch]$MachineKeySet = $false
+    [parameter(ParameterSetName="InputObject")]
+    [parameter(ParameterSetName="DnsName")]
+    [parameter(ParameterSetName="Thumbprint")]
+    [UiucCertificateScope]$Scope = [UiucCertificateScope]::CurrentUser
   )
 
+  Begin {
+    $machineKeySet = ($Scope -eq [UiucCertificateScope]::LocalMachine) -or ($Scope -eq [UiucCertificateScope]::WebHosting)
+  }
+
   Process {
-    $tmpINF = New-TemporaryFile
-    $tmpCSR = New-TemporaryFile
+    $values = If ($Renew) {
+      # If we are renewing they values are the cert objects and only
+      # process ones we can find.
+      Switch ($PSCmdlet.ParameterSetName) {
+        InputObject     { Find-UiucCertificate -InputObject $InputObject -Scope $Scope }
+        Certificate     { Find-UiucCertificate -Certificate $Certificate }
+        DnsName         { Find-UiucCertificate -DnsName $DnsName -Scope $Scope }
+        Thumbprint      { Find-UiucCertificate -Thumbprint $Thumbprint -Scope $Scope }
+      }
+    } Else {
+      # We are not renewing, so create a new request with a new key and
+      # the values are the Subjects.
+      Switch ($PSCmdlet.ParameterSetName) {
+        InputObject {
+          If ($InputObject -is [System.Security.Cryptography.X509Certificates.X509Certificate]) {
+            $InputObject.Subject
+          } ElseIf ($InputObject -is [string]) {
+            If ($InputObject -match $ThumbprintPattern) {
+              Find-UiucCertificate -Thumbprint $InputObject -Scope $Scope | select -First 1 | % { $_.Subject }
+            } Else {
+              $CertificateSubjectFormat -f $InputObject
+            }
+          }
+        }
 
-    Write-Verbose "Temporary INF File: $($tmpINF.FullName)"
-    Write-Verbose "Temporary CSR File: $($tmpCSR.FullName)"
+        Certificate { $Certificate.Subject }
+        Thumbprint  { Find-UiucCertificate -Thumbprint $Thumbprint -Scope $Scope | % { $_.Subject; $_.Dispose() } }
+        DnsName     { $CertificateSubjectFormat -f $DnsName }
+      }
+    }
 
-    Try {
-      @"
+    $values | % {
+      $tmpINF = New-TemporaryFile
+      $tmpCSR = New-TemporaryFile
+
+      Write-Verbose "Temporary INF File: $($tmpINF.FullName)"
+      Write-Verbose "Temporary CSR File: $($tmpCSR.FullName)"
+
+      Try {
+        If ($Renew) {
+          $csrDomain = $_.DnsNameList[0].Unicode
+          $csrPrefix = '{0}-{1}' -f $csrDomain, $_.Thumbprint
+          $csrPolicy = @"
 [NewRequest]
-Subject = "CN=$Domain, OU=Urbana-Champaign Campus, O=University of Illinois, L=Urbana, S=Illinois, C=US"
+Subject = "$($_.Subject)"
+RenewalCert = "$($_.Thumbprint)"
+UseExistingKeySet = true
+HashAlgorithm = $HashAlgorithm
+MachineKeySet = $machineKeySet
+SMIME = false
+Silent = true
+"@
+        } Else {
+          $csrDomain = Select-String -InputObject $_ -Pattern $CertificateSubjectCNPattern | % { $_.Matches.Groups[1].Value }
+          $csrPrefix = $csrDomain
+          $csrPolicy = @"
+[NewRequest]
+Subject = "$_"
 Exportable = true
 ExportableEncrypted = false
 HashAlgorithm = $HashAlgorithm
 KeyAlgorithm = RSA
 KeyLength = $KeyLength
-MachineKeySet = $MachineKeySet
+MachineKeySet = $machineKeySet
 ProviderName = "Microsoft RSA SChannel Cryptographic Provider"
 ProviderType = 12
 SMIME = false
-"@ | Set-Content -LiteralPath $tmpINF.FullName
-      Get-Content -LiteralPath $tmpINF.FullName | Write-Debug
+Silent = true
+"@
+        }
+        $csrPolicy | Set-Content -LiteralPath $tmpINF.FullName
+        Write-Debug "CertReq Policy: $csrPolicy"
 
-      $output = certreq -New -f $tmpINF.FullName $tmpCSR.FullName
-      Write-Debug "CertReq -New output: $output"
-      If ($LastExitCode -ne 0) {
-        Throw "CertReq -New failed: $LastExitCode"
+        $output = certreq -New -f -q $tmpINF.FullName $tmpCSR.FullName
+        Write-Debug "CertReq -New output: $output"
+        If ($LastExitCode -ne 0) {
+          Write-Error "CertReq -New failed for $($_): $LastExitCode"
+          Return
+        }
+
+        Write-Output ([ordered]@{
+          DnsName = $csrDomain
+          Subject = If ($_ -is [string]) { $_ } Else { $_.Subject }
+          CertificateSigningRequest = ((Get-Content -LiteralPath $tmpCSR.FullName) -join "`n")
+        })
+
+        If ($Path) {
+          Copy-Item -LiteralPath $tmpCSR.FullName (Join-Path $Path "$csrPrefix-csr.pem")
+        }
+      } Finally {
+        $tmpINF.Delete()
+        $tmpCSR.Delete()
+
+        If ($_ -is [IDisposable]) {
+          $_.Dispose()
+        }
       }
-
-      Write-Output ([ordered]@{
-        Domain = $Domain
-        CertificateSigningRequest = ((Get-Content -LiteralPath $tmpCSR.FullName) -join "`n")
-      })
-
-      If ($Path) {
-        Copy-Item -LiteralPath $tmpCSR.FullName (Join-Path $Path "$Domain-csr.pem")
-      }
-    } Finally {
-      $tmpINF.Delete()
-      $tmpCSR.Delete()
     }
   }
 }
@@ -141,9 +339,6 @@ SMIME = false
 .SYNOPSIS
 Installs a signed UIUC certificate into the Windows certificate store that was
 previously requested.
-
-.DESCRIPTION
-
 
 .INPUTS
 
@@ -157,9 +352,8 @@ System.String. Thumbprint of the certificate.
 function Install-UiucCertificate {
   Param(
     [parameter(ValueFromPipeline=$true, Position=0, Mandatory=$true)]
-    [alias("Cert")]
     [ValidateNotNullOrEmpty()]
-    [string]$Certificate
+    [string]$InputObject
   )
 
   Process {
@@ -167,11 +361,11 @@ function Install-UiucCertificate {
     Write-Verbose "Temporary CRT File: $($tmpCRT.FullName)"
 
     Try {
-      If ($Certificate -match '-----BEGIN CERTIFICATE-----') {
+      If ($InputObject -match '-----BEGIN CERTIFICATE-----') {
         # We were passed a certificate string, not a file path
-        $Certificate | Set-Content -LiteralPath $tmpCRT.FullName -Encoding ASCII
+        $InputObject | Set-Content -LiteralPath $tmpCRT.FullName -Encoding ASCII
       } Else {
-        Copy-Item -LiteralPath $Certificate $tmpCRT.FullName
+        Copy-Item -LiteralPath $InputObject $tmpCRT.FullName
       }
 
       If ((Select-String -Pattern '-----BEGIN CERTIFICATE-----' -LiteralPath $tmpCRT.FullName -AllMatches).Matches.Count -le 1) {
@@ -277,42 +471,63 @@ Export a signed certificate from the Windows certificate store.
 
 .INPUTS
 
-System.String. Thumbprint of the certificate or domain name. If a domain name
-matches multiple certificates in the store then they are all returned.
+object. This can be either an X509Certificate object, a string
+thumbprint, or a DNS domain.
 
 .PARAMETER Certificate
 
-Thumbprint of the certificate or domain name. If a domain name matches multiple
-certificates in the store then they are all returned.
+X509Certificate object to export.
+
+.PARAMETER Thumbprint
+
+SHA1 hash of a certificate to export.
+
+.PARAMETER DnsName
+
+Primary DNS domain name for the certificate to export. Using this
+parameter might generate multiple exports.
 
 .PARAMETER SecurePassword
 
-Password used to encrypt the intermediary PFX file exported. Not all of the
-files exported will be protected with this password; some are left unencrypted.
+Password used to encrypt the intermediary PFX file exported. Not all
+of the files exported will be protected with this password; some are
+left unencrypted.
 
 .PARAMETER Path
 
-Path to save certificate file formats. Each format will be prefixed with the
-domain name for that certificate. If this is not specified then the files are
-not saved.
+Path to save certificate file formats. Each format will be prefixed
+with the DNS domain name and thumbprint for that certificate. If this is
+not specified then the files are not saved.
 
-.PARAMETER MachineKeySet
+.PARAMETER Scope
 
-Store the key in the LocalMachine store instead of CurrentUser. Saving to
-the MachineKeySet requires Administrator prileges.
+Where the certificate is stored: CurrentUser, LocalMachine, or
+WebHosting. If LocalMachine or WebHosting then the user must be the
+Adminsitrator.
 
 .OUTPUTS
 
-@{Thumbprint; Domain; PrivateKey, Certificate}.
-Information about each certificate created. The values are strings in PEM
-format.
+@{Thumbprint; DnsName; PrivateKey, Certificate}.
+Information about each certificate created. The values are strings in
+PEM format.
 #>
 function Export-UiucCertificate {
   Param(
-    [parameter(ValueFromPipeline=$true, Position=0, Mandatory=$true)]
-    [alias("Cert", "Domain", "Thumbprint")]
+    [parameter(ValueFromPipeline=$true, Position=0, Mandatory=$true, ParameterSetName="InputObject")]
     [ValidateNotNullOrEmpty()]
-    [string]$Certificate,
+    [object]$InputObject,
+
+    [parameter(Mandatory=$true, ParameterSetName="Certificate")]
+    [ValidateNotNullOrEmpty()]
+    [System.Security.Cryptography.X509Certificates.X509Certificate]$Certificate,
+
+    [parameter(Mandatory=$true, ParameterSetName="DnsName")]
+    [ValidateNotNullOrEmpty()]
+    [string]$DnsName,
+
+    [parameter(Mandatory=$true, ParameterSetName="Thumbprint")]
+    [ValidateNotNullOrEmpty()]
+    [string]$Thumbprint,
 
     [parameter(Position=1, Mandatory=$true)]
     [alias("Password")]
@@ -320,23 +535,23 @@ function Export-UiucCertificate {
 
     [string]$Path = $null,
 
-    [switch]$MachineKeySet = $false
+    [parameter(ParameterSetName="InputObject")]
+    [parameter(ParameterSetName="DnsName")]
+    [parameter(ParameterSetName="Thumbprint")]
+    [UiucCertificateScope]$Scope = [UiucCertificateScope]::CurrentUser
   )
 
   Begin {
-    $CertBase = If ($MachineKeySet) { "Cert:\LocalMachine\My" } Else { "Cert:\CurrentUser\My" }
-
     $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecurePassword)
     $PlainPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
   }
 
   Process {
-    If ($Certificate -match '^[a-f0-9]{40}$') {
-      # We got a thumbprint. Add it directly to the list
-      $certs = @((Join-Path $CertBase $Certificate))
-    } Else {
-      # We got a domain. Find all the children with this domain as the CN
-      $certs = @(Get-ChildItem $CertBase | ? { $_.Subject -match "(^|[\s,])CN=$([Regex]::Escape($Certificate))(,|`$)" } | % { Join-Path $CertBase $_.Thumbprint })
+    $certs = Switch ($PSCmdlet.ParameterSetName) {
+      InputObject   { Find-UiucCertificate -InputObject $InputObject -Scope $Scope }
+      Certificate   { Find-UiucCertificate -Certificate $Certificate }
+      DnsName       { Find-UiucCertificate -DnsName $DnsName -Scope $Scope }
+      Thumbprint    { Find-UiucCertificate -Thumbprint $Thumbprint -Scope $Scope }
     }
 
     $certs | % {
@@ -350,7 +565,6 @@ function Export-UiucCertificate {
 
         $cert = New-Object Chilkat.Cert
         $cert.LoadPfxFile($tmpPFX.FullName, $PlainPassword)
-        $certChain = $cert.GetCertChain()
         $privKey = $cert.ExportPrivateKey()
         If ($privKey -eq $null) {
           Write-Error "Unable to export private key for $_ (error = $($cert.LastErrorText))"
@@ -359,16 +573,13 @@ function Export-UiucCertificate {
 
         Write-Output ([ordered]@{
           Thumbprint = $cert.Sha1Thumbprint
-          Domain = $cert.SubjectCN
+          DnsName = $cert.SubjectCN
           PrivateKey = $privKey.GetRsaPem()
           Certificate = $cert.ExportCertPem()
         })
 
         If ($Path) {
-          $prefix = $cert.SubjectCN
-          If ($certs.Length -gt 1) {
-            $prefix += "-$($cert.Sha1Thumbprint)"
-          }
+          $prefix = '{0}-{1}' -f $cert.SubjectCN, $cert.Sha1Thumbprint
 
           Copy-Item -LiteralPath $tmpPFX.FullName (Join-Path $Path "$prefix.pfx")
           $privKey.GetRsaPem() | Set-Content -LiteralPath (Join-Path $Path "$prefix-key.pem") -Encoding ASCII
@@ -378,6 +589,7 @@ function Export-UiucCertificate {
         }
       } Finally {
         $tmpPFX.Delete()
+        $_.Dispose()
       }
     }
   }
